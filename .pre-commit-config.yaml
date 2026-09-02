@@ -1,0 +1,44 @@
+# Shift-left gate: these run before code exists anywhere but your disk.
+#   uv tool install pre-commit && pre-commit install
+#
+# Bypass with --no-verify is possible and that is fine. The same checks run in
+# CI, where they cannot be skipped. Local hooks exist for speed, not
+# enforcement -- see the pre-commit job in .github/workflows/ci.yml, which is
+# what actually proves the config is valid rather than merely present.
+repos:
+  # --- hygiene ---------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # --- secrets ---------------------------------------------------------
+  # The highest-value hook here. A leaked key is the single most common way a
+  # small repo becomes an incident.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # --- python ----------------------------------------------------------
+  # Settings live in pyproject.toml so ruff resolves the same rules whichever
+  # directory it is invoked from. Leaving [tool.ruff] out means the repo root
+  # and the project directory disagree about what a lint failure is.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+# PSScriptAnalyzer is deliberately absent. run.ps1 is the only PowerShell here
+# and PSSA needs Windows PowerShell, so as a hook it would pass on one
+# contributor's machine and be skipped everywhere else -- a gate whose result
+# depends on who ran it is not a gate. Lint it on a Windows box, or add it as a
+# windows-latest CI job where the result means something.

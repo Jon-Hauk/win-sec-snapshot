@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+snapshot.json
+snapshot.md
+# uv.lock is deliberately NOT ignored. This is an application, not a
+# library: the lock is the reproducibility guarantee, CI syncs from it,
+# and setup-uv keys its cache on it. genai/ tracks its lock for the same
+# reason. Ignoring it here was a template leftover.

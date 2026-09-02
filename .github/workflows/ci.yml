@@ -1,0 +1,174 @@
+name: ci
+
+# Adapted from the private monorepo this project was extracted from, where this
+# workflow has actually run. Kept deliberately close to that version: the parts
+# that differ are the parts that had to.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Dependencies rot even when you do not touch them. A weekly scan catches a
+    # CVE published against a pinned version you have not changed.
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # main is exempt: cancelling its runs costs the record of whether main is
+  # green, and the cache save that only happens when a run finishes.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------
+  # The positive signal that the hooks are real. A commit made with no hooks
+  # installed looks exactly like a commit where every hook passed, so local
+  # hooks cannot be trusted to prove anything on their own.
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        with:
+          extra_args: --all-files
+
+  # ---------------------------------------------------------------
+  # The tool targets Windows, but every gate here is host-agnostic: the
+  # PowerShell calls are behind an injected runner and the tests supply their
+  # own. Running on Linux keeps the gate free and fast. It does mean nothing
+  # here exercises a real PowerShell - that is what run.ps1 on a Windows box
+  # is for, and why the sample in the README is a real capture.
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync
+        run: uv sync
+      - name: Ruff
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Restore mypy cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-${{ hashFiles('src/**/*.py') }}
+          restore-keys: |
+            mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-
+            mypy-${{ runner.os }}-
+      - name: Mypy
+        run: uv run mypy src
+      - name: Pytest
+        run: uv run pytest -q
+
+  # ---------------------------------------------------------------
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gitleaks-action enumerates a PR's commits via the pulls API, which the
+      # top-level contents: read alone does not cover - it 403s with "Resource
+      # not accessible by integration" on the first PR and never on a push.
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # gitleaks needs full history to scan past commits
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------
+  sast:
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: semgrep ci --config p/python --config p/secrets --config p/github-actions
+
+  # ---------------------------------------------------------------
+  dependencies:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      # upload-sarif reads the workflow run it reports against; without
+      # actions: read that call 403s even when the SARIF itself is valid.
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Pinned to a commit SHA, not a tag: trivy-action is itself one of the
+      # actions named in the compromise that motivates semgrep's
+      # mutable-action-tag rule. SHA below is tag v0.36.0.
+      - name: Trivy (report, all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"        # informational; the gate is the third step
+          format: table
+          output: ""
+
+      # exit-code 0 on purpose: trivy-action rewrites `severity` to all
+      # severities whenever format is sarif, so a SARIF step that gates would
+      # fail on LOW and UNKNOWN no matter what severity says.
+      - name: Trivy (SARIF artifact for code scanning)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          exit-code: "0"
+          format: sarif
+          output: trivy.sarif
+
+      # In the private monorepo this could never succeed - code scanning there
+      # needs GitHub Advanced Security. On a public repo it is free and should
+      # work. Left non-fatal until a real run confirms that; drop the
+      # continue-on-error once one has.
+      - name: Upload to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: trivy.sarif
+
+      # The actual gate, and the only step here that can fail the job. Uses a
+      # non-SARIF format specifically so that `severity` is honoured.
+      - name: Trivy (gate on CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          format: table
+          output: ""
+
+  # ---------------------------------------------------------------
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
+        with:
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+      # An SBOM you cannot retrieve after the fact is not an SBOM.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: sbom.cyclonedx.json
+          retention-days: 90

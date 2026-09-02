@@ -1,0 +1,50 @@
+[project]
+name = "win-sec-snapshot"
+version = "0.0.0"
+description = "Read-only Windows host security posture snapshot (JSON + Markdown)."
+requires-python = ">=3.12"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+[project.scripts]
+win-sec-snapshot = "win_sec_snapshot.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/win_sec_snapshot"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.16.5", "mypy>=1.14.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+# Ruff and mypy settings are declared here, not inherited. Without a [tool.ruff]
+# section ruff resolves a different rule set depending on the directory it is
+# invoked from: from the repo root it fell back to defaults and reported
+# nothing, while from this directory it reported findings. CI runs it both ways
+# - repo-wide in the pre-commit job, per-project in lint-and-test - so the two
+# have to agree. These mirror genai/pyproject.toml so one standard covers both.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "RUF"]
+ignore = ["S101"]  # assert is fine in tests
+
+[tool.ruff.lint.per-file-ignores]
+# Fixture data models what Get-NetTCPConnection returns, and a listener bound to
+# 0.0.0.0 is exactly the case worth having a test for. S104 reads it as the code
+# binding a socket; nothing here opens one.
+"tests/*" = ["S104"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
