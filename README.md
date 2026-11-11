@@ -3,7 +3,7 @@
 Read-only Windows host security posture snapshot. One command, JSON + Markdown,
 no secrets, no network, no ACL changes.
 
-Built for a reviewer in DevSecOps, sysadmin, cloud, or software engineering:
+Built for a reviewer checking a Windows machine's security settings:
 clone, run, attach the receipt.
 
 ## Why it is safe
