@@ -1,7 +1,10 @@
 # win-sec-snapshot 0.0.0
 
-Read-only Windows host security posture snapshot. One command, JSON + Markdown,
-no secrets, no network, no ACL changes.
+Read-only Windows host security posture snapshot. JSON + Markdown, no secrets,
+no network, no ACL changes.
+
+Requires Windows, Python 3.12, and uv (install them first if they are not
+already present). Then run one command, below.
 
 Built for a reviewer checking a Windows machine's security settings:
 clone, run, attach the receipt.
